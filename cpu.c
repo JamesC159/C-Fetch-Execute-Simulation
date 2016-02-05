@@ -14,7 +14,7 @@ int main (int arc, char **argv)
 	int pipe1[2];		// File descriptors for PC writing to memory
 	int pipe2[2];		// File descriptors for PC Reading from memory
 	pid_t childPid;		// Child Process ID
-	int status;			// Status returned from waiting for the child to finish
+	int status;		// Status returned from waiting for the child to finish
 
 	pid_t cPid = getpid();
 
@@ -43,12 +43,12 @@ int main (int arc, char **argv)
 
 			// File names to use as tests
 			const char *sample1 = "sample1.txt";
-			FILE *file;									// File to be read into memory array
+			
+			FILE *file;					// File to be read into memory array
 			char *str = malloc(sizeof(char) * 50);		// Contains strings from the file
-			int numRead = 100;							// Number of bytes to read from the file
-			int num = 0;								// Actual instruction to reside in memory
-			int idx = 0;								// Index into memory
-			int count = 0;								// How many instructions were read into memory
+			int numRead = 100;				// Number of bytes to read from the file
+			int num = 0;					// Actual instruction to reside in memory
+			int idx = 0;					// Index into memory
 
 			// Check to see if memory can open the sample file
 			if ((file = fopen(sample1, "r")) == NULL)
@@ -78,7 +78,7 @@ int main (int arc, char **argv)
 				char *token = malloc (sizeof(char) * 50);
 				char *delims = " ";
 				token = strtok(str, delims);	// We really dont care about destroyign the rest of the string
-												// because the rest doest matter after the integer
+								// because the rest doest matter after the integer
 
 				// Check to see if we need to change the location of PC in memory
 				if (token[0] == '.')
