@@ -16,8 +16,6 @@ int main (int arc, char **argv)
 	pid_t childPid;		// Child Process ID
 	int status;		// Status returned from waiting for the child to finish
 
-	pid_t cPid = getpid();
-
 	if (((pipe(pipe1)) < 0 )|| (pipe(pipe2)) < 0 )
 	{
 		perror("pipe");
@@ -75,7 +73,7 @@ int main (int arc, char **argv)
 				}
 
 				// Fill memory with instrutions
-				char *token = malloc (sizeof(char) * 50);
+				char *token;
 				char *delims = " ";
 				token = strtok(str, delims);	// We really dont care about destroyign the rest of the string
 								// because the rest doest matter after the integer
@@ -111,8 +109,10 @@ int main (int arc, char **argv)
 			dup2(pipe2[1], STDOUT_FILENO);
 			dup2(pipe1[0], STDIN_FILENO);
 
-			// Read the PC from the processor and fetch the instruction at that location from memory
+			// Read the PC from the CPU  and fetch the instruction at that location from memory
 			read(pipe1[0], &idx, sizeof(int));
+
+			// Write instruction from memory to pipe for CPU to read
 			write(pipe2[1], &(mem[idx]), sizeof(int));
 
 			_exit(0);
@@ -137,11 +137,14 @@ int main (int arc, char **argv)
 
 			// Send the PC to memory to fetch an instruction
 			write(pipe1[1], &PC, sizeof(PC));
-			read(pipe2[0], &instr, sizeof(int));
 
+			// Read the instruction written back to the CPU and store it in instr
+			read(pipe2[0], &instr, sizeof(int));
+			
+			// This really isnt an error, I just did not want to do more file redirection right now
 			fprintf(stderr, "Instruction read from memory is: %d\n", instr);
 
-			// If the something went wrong with the child, then waippid caused an error
+			// If the something went wrong with the child, then waitppid caused an error
 			if((pidReturned = waitpid(childPid, &status, 0)) == -1)
 			{
 				perror("waitPid");
