@@ -1,15 +1,46 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <dirent.h>		// May be useless, IDK yet.
 #include <string.h>
 #include <limits.h>
 #include <math.h>
+#include <time.h>
+
+int readVal(int idx, int pipe1[], int pipe2[])
+{
+	int store = 0;
+	int val = 0;
+
+	write(pipe1[1], &store, sizeof(int));
+	write(pipe1[1], &idx, sizeof(int)); // Fetch the value from memory
+	read(pipe2[0], &val, sizeof(int)); // Read the value written back to the CPU
+	return val;
+}
+
+void writeVal(int idx, int val, int pipe1[])
+{
+	int store = 1;
+	
+	write(pipe1[1], &store, sizeof(int));
+	write(pipe1[1], &idx, sizeof(int));
+	write(pipe1[1], &val, sizeof(int));
+}
+
+void checkValidAddress(int isUserMode, int idx, int childPid)
+{
+	if(isUserMode && idx >= 1000)
+	{
+		fprintf(stderr, "Memory Violation: accessing system address %d in user mode\n", idx);
+		kill(SIGTERM, childPid);
+		exit(1);
+	}
+}
 
 int main (int arc, char **argv)
 {
@@ -41,14 +72,16 @@ int main (int arc, char **argv)
 		int mem[2000];	// Memory that holds 2000 integers that represent instructions
 			
 		// File names to use as tests
-		const char *sample1 = "sample1.txt";
+		const char *sample1 = "sample3.txt";	// Constant string for file to open
 		
 		FILE *file;	// File to be read into memory array
 		char *str = malloc(sizeof(char) * 50);	// Contains strings from the file
 		int numRead = 100;	// Number of bytes to read from the file
 		int num = 0;		// Actual instruction to reside in memory
 		int idx = 0;		// Index into memory
-			
+		int isWriting = 0;
+		int val = 0;		
+
 		// Check to see if memory can open the sample file
 		if ((file = fopen(sample1, "r")) == NULL)
 		{
@@ -77,23 +110,23 @@ int main (int arc, char **argv)
 			char *token;
 			char *delims = " ";
 			token = strtok(str, delims);	// We really dont care about destroyign the rest of the string
-			
-			// Check to see if we need to change the location of PC in memory
+
 			if (token[0] == '.')
 			{
 				token++;
-				idx = atoi(token);
+				if (isdigit(token[0]))
+				{
+					idx = atoi(token);
+				}
 			}
-
-			// If there is an empty line in the file, ignore it
-			else if (token[0] == '\n')
-			{
-				continue;
-			}
-			else
+			else if (isdigit(token[0]))
 			{
 				num = atoi(token);
 				mem[idx++] = num;
+			}
+			else
+			{
+				continue;
 			}
 		}
 
@@ -111,11 +144,22 @@ int main (int arc, char **argv)
 
 		while(1)
 		{
-			// Read the PC from the CPU  and fetch the instruction at that location from memory
-			read(pipe1[0], &idx, sizeof(int));
+			read(pipe1[0], &isWriting, sizeof(int));
+			
+			if (!isWriting)
+			{
+				read(pipe1[0], &idx, sizeof(int));
+			
+				// Write instruction from memory to pipe for CPU to read
+				write(pipe2[1], &(mem[idx]), sizeof(int));
+			}
+			else
+			{
+				read(pipe1[0], &idx, sizeof(int));
+				read(pipe1[0], &val, sizeof(int));
+				mem[idx] = val;
+			}
 
-			// Write instruction from memory to pipe for CPU to read
-			write(pipe2[1], &(mem[idx]), sizeof(int));
 		}
 
 		_exit(0);
@@ -124,15 +168,16 @@ int main (int arc, char **argv)
 	{
 		//CPU Registers
 		int PC = 0;
-		int SP = 0;
+		int SP = 1000;
 		int IR = 0;
 		int AC = 0;
 		int X = 0;
 		int Y = 0;
+		int store = 0;
 
 		int pidReturned = 0;
-		int isUsingUserStack = 1;	// Initially true
 		int shouldExit = 0;	// Used to signal break from main execution loop
+		int isUserMode = 1;
 
 		// Create pipes for CPU to Mem communication
 		close(pipe1[0]);
@@ -142,84 +187,80 @@ int main (int arc, char **argv)
 
 		while (!shouldExit)
 		{
-			// Send the PC to memory to fetch an instruction
-			write(pipe1[1], &PC, sizeof(PC));
-
-			// Read the instruction written back to the CPU and store it in instr
-			read(pipe2[0], &IR, sizeof(IR));
+			IR = readVal(PC, pipe1, pipe2);	// Fetch instruction
 
 			// Switch block to determine which instruction needs to execute
 			switch (IR)
 			{
 				case 1:	// Load value
 				{
-
 					PC++;
-
-					// Fetch the value from memory
-					write(pipe1[1], &PC, sizeof(PC));
-
-					// Read the value written back to the CPU and store it in the AC
-					read(pipe2[0], &AC, sizeof(AC));
-
+					AC = readVal(PC, pipe1, pipe2); // Load value into AC
 					break;
 				}
 				case 2: // Load addr
 				{
+					PC++;
+					AC = readVal(PC, pipe1, pipe2);
+					checkValidAddress(isUserMode, AC, childPid);
+					AC = readVal(AC, pipe1, pipe2);
 					break;
 				}
 				case 3:	// LoadInd addr
 				{
+					PC++;
+					AC = readVal(PC, pipe1, pipe2);
+					checkValidAddress(isUserMode, AC, childPid);
+					AC = readVal(AC, pipe1, pipe2);
+					checkValidAddress(isUserMode, AC, childPid);
+					AC = readVal(AC, pipe1, pipe2);	
 					break;
 				}
 				case 4:	// LoadIdxX addr
 				{
-					PC++;					
-
-					// Fetch address from memory
-					write(pipe1[1], &PC, sizeof(PC));
-					read(pipe2[0], &AC, sizeof(PC));
-					
+					PC++;
+					AC = readVal(PC, pipe1, pipe2);
 					AC += X;
-					
-					// Fetch address at AC + X form memory
-					write(pipe1[1], &AC, sizeof(AC));
-					read(pipe2[0], &AC, sizeof(AC));
-
+					checkValidAddress(isUserMode, AC, childPid);
+					AC = readVal(AC, pipe1, pipe2);
 					break;
 				}
 				case 5:
 				{
 					PC++;
-					write(pipe1[1], &PC, sizeof(PC));
-					read(pipe2[0], &AC, sizeof(AC));
-					
+					AC = readVal(PC, pipe1, pipe2);
 					AC += Y;
-
-					write(pipe1[1], &AC, sizeof(AC));
-					read(pipe2[0], &AC, sizeof(AC));
-
+					checkValidAddress(isUserMode, AC, childPid);
+					AC = readVal(AC, pipe1, pipe2);
 					break;
 				}
 				case 6:
 				{
+					int SPX = SP + X + 1;
+					checkValidAddress(isUserMode, SPX, childPid);
+					AC = readVal(SPX, pipe1, pipe2);
 					break;
 				}
 				case 7:
 				{
+					PC++;
+					int idx;
+					idx = readVal(PC, pipe1, pipe2);
+					checkValidAddress(isUserMode, idx, childPid);
+					writeVal(idx, AC, pipe1);
 					break;
 				}
 				case 8:
 				{
+					srand(time(NULL));
+					AC = rand() % 100;
 					break;
 				}
 				case 9: // Put port
 				{
 					PC++;
-					
 					int port;
-					write(pipe1[1], &PC, sizeof(PC));
-					read(pipe2[0], &port, sizeof(port));
+					port = readVal(PC, pipe1, pipe2);
 					
 					if (port == 1)
 					{
@@ -241,6 +282,7 @@ int main (int arc, char **argv)
 				}
 				case 10:
 				{
+					AC += X;
 					break;
 				}
 				case 11:
@@ -250,20 +292,22 @@ int main (int arc, char **argv)
 				}
 				case 12:
 				{
+					AC -= X;
 					break;
 				}
 				case 13:
 				{
+					AC -= Y;
 					break;
 				}
 				case 14:
-				{						
+				{
 					X = AC;
-					fprintf(stderr, "Value in X after 14 is: %d\n", X);
 					break;
 				}
 				case 15:
 				{
+					AC = X;
 					break;
 				}
 				case 16:
@@ -273,21 +317,23 @@ int main (int arc, char **argv)
 				}
 				case 17:
 				{
+					AC = Y;
 					break;
 				}
 				case 18:
 				{
+					SP = AC;
 					break;
 				}
 				case 19:
 				{
+					AC = SP;
 					break;
 				}
 				case 20:
 				{
 					PC++;
-					write(pipe1[1], &PC, sizeof(PC));
-					read(pipe2[0], &PC, sizeof(PC));
+					PC = readVal(PC, pipe1, pipe2);
 					continue;
 				}
 				case 21: // JumpIfEqual addr
@@ -296,8 +342,7 @@ int main (int arc, char **argv)
 
 					if (AC == 0)
 					{
-						write(pipe1[1], &PC, sizeof(PC));
-						read(pipe2[0], &PC, sizeof(AC));
+						PC = readVal(PC, pipe1, pipe2);
 						continue;
 					}
 					
@@ -305,15 +350,31 @@ int main (int arc, char **argv)
 				}
 				case 22:
 				{
+					PC++;
+	
+					if (AC != 0)
+					{
+						PC = readVal(PC, pipe1, pipe2);
+						continue;
+					}
+
 					break;
 				}
 				case 23:
 				{
-					break;
+					PC += 2;
+					writeVal(SP, PC, pipe1);
+					SP--;
+					PC--;
+					PC = readVal(PC, pipe1, pipe2);
+					continue;
 				}
 				case 24:
 				{
-					break;
+					SP++;
+					PC = readVal(SP, pipe1, pipe2);
+					checkValidAddress(isUserMode, PC, childPid);
+					continue;
 				}
 				case 25:
 				{
@@ -327,28 +388,50 @@ int main (int arc, char **argv)
 				}
 				case 27:
 				{
+					writeVal(SP, AC, pipe1);
+					SP--;
 					break;
 				}
 				case 28:
 				{
+					SP++;
+					AC = readVal(SP, pipe1, pipe2);
 					break;
 				}
 				case 29:
 				{
+					isUserMode = 0;	// Set CPU to kernel mode
+					int tempSP = SP;
+					int tempPC = PC;
+					
+					SP = 1999;
+					PC = 1499;
+					writeVal(SP, tempSP, pipe1);
+					SP--;
+					writeVal(SP, tempPC, pipe1);
+					SP--;
 					break;
 				}
 				case 30:
 				{
+					SP++;
+					PC = readVal(SP, pipe1, pipe2);
+					SP++;
+					SP = readVal(SP, pipe1, pipe2);
+					isUserMode = 1;	// Reset CPU to user mode
 					break;
 				}
 				case 50: // End execution
 				{
 					shouldExit = 1;
-					kill (childPid, SIGTERM);
+					kill(childPid, SIGTERM);
 					break;
 				}
 				default:
 				{
+					fprintf(stderr, "ERROR: Invalid instruction\n");
+					kill(childPid, SIGTERM);
+					exit(1);
 				}
 
 			} // End of switch case statement
