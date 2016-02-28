@@ -10,3 +10,11 @@ Memory is initialized with a program read from a file that is implemented with t
 User mode and kernel mode is also implemented and considered in this program. User stack and system stack resides within the user and kernel mode spaces. Pushing and poping onto each of these addresses is possible. Pushing onto the kernel mode stack is only possible during interrupts. Trying to push into the kernel mode stack from user mode space will cause a memory error and abort the program.
 
 Issues: Timer has not been implemented for program 3
+
+to complile types the commands in the terminal:
+
+gcc -o driver cpu.c -g
+./driver
+
+and dto dbug
+lldb ./driver or gdb ./driver
